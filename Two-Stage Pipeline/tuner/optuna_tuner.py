@@ -1,5 +1,3 @@
-# File: tuner/optuna_tuner.py
-
 import os
 import json
 import torch
