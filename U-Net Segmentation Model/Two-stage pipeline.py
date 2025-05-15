@@ -14,7 +14,6 @@ from models.yolo import load_yolov8_model
 from data.dataset import SegmentationDataset
 from config import *
 
-
 # Configuration
 IMAGE_DIR = TEST_IMAGES_DIR
 MASK_DIR = TEST_MASKS_DIR
@@ -64,14 +63,25 @@ for image, mask in tqdm(dataloader, desc="Running Two-Stage Pipeline"):
     # Stage 1: YOLO
     yolo_preds = yolo_model(image)
     boxes = yolo_preds[0].boxes
-    yolo_classes = boxes.cls.detach().cpu().numpy() if boxes is not None else []
+    valid_classes = set()
+    if boxes is not None:
+        for box in boxes:
+            if box.conf.item() > YOLO_THRESHOLD:
+                valid_classes.add(int(box.cls.item()))
 
     # Stage 2: U-Net
     with torch.no_grad():
-        unet_out = unet_model(image)
-        unet_pred = torch.argmax(unet_out, dim=1)
+        unet_out = torch.softmax(unet_model(image), dim=1)
+        unet_pred = torch.argmax(unet_out, dim=1).squeeze().cpu()
 
-    all_preds.append(unet_pred.squeeze().cpu())
+    # Apply threshold-based filtering
+    final_pred = torch.zeros_like(unet_pred)
+    for cls in valid_classes:
+        prob_map = unet_out[0, cls, :, :].cpu()
+        mask_cls = (prob_map > UNET_THRESHOLD).long()
+        final_pred[mask_cls == 1] = cls
+
+    all_preds.append(final_pred)
     all_labels.append(mask.squeeze().cpu())
 
 # Compute and Export Metrics
